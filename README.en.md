@@ -4,17 +4,18 @@
 
 <p align="center"><img src="docs/demo-en.gif" width="720" alt="Tapping the Touch Bar triggers haptic feedback on the trackpad"></p>
 
-A tiny macOS menu bar app that gives you **haptic feedback on the trackpad** and/or a **click sound** whenever you touch the MacBook Touch Bar.
+A tiny macOS menu bar app that gives you **haptic feedback on the trackpad** and a soft **"todok" click sound** whenever you press a button on the MacBook Touch Bar.
 
-The Touch Bar has no haptic motor, so taps feel flat. This app detects Touch Bar touches and fires the Force Touch trackpad's haptic engine right below it — with your hands on the keyboard, you feel a subtle "tap" under your palm.
+The Touch Bar has no haptic motor, so taps feel flat. This app detects Touch Bar touches, fires the Force Touch trackpad's haptic engine right below it, and plays a short keyboard-like tap sound.
 
 ## Features
 
-- Feedback on every Touch Bar touch — Esc, volume slider, app buttons, anything
+- Feedback only when you press a **button** (taps on gaps or empty space stay silent)
 - Three haptic strengths: Light / Medium / Strong
-- Optional click sound (system "Tink")
+- Click sound: **Todok** (default, synthesized) / Tink / any sound file you choose
+- Todok rotates through three slight variations so it never sounds mechanical
 - Launch at login
-- Settings saved automatically; lives in the menu bar, no windows
+- Menu follows your system language (Korean or English)
 
 ## Requirements
 
@@ -35,18 +36,20 @@ open ~/Applications/TouchBarFeedback.app
 
 ### First launch
 
-1. Grant **Input Monitoring** permission:
-   System Settings → Privacy & Security → Input Monitoring → turn on TouchBarFeedback
-   (the "⚠️ Input Monitoring permission needed" menu item opens that pane for you)
+1. Grant **Accessibility** permission. It's needed to detect touches and locate Touch Bar buttons.
+   - When the accessibility prompt appears, click **Open System Settings**.
+   - System Settings → Privacy & Security → Accessibility → turn on **TouchBarFeedback**
 2. **Quit and relaunch the app.** The permission only takes effect after a relaunch.
-   (If a "Quit & Reopen" prompt appears, just click it.)
-3. Tap the Touch Bar.
+3. Press a Touch Bar button.
 
-> **If you rebuild**, the ad-hoc signature changes and the old permission no longer applies. Remove TouchBarFeedback from the Input Monitoring list with **−**, add it again, and relaunch the app. Even if the switch looks on, the old entry won't work — remove and re-add it.
+> **If you rebuild**, the ad-hoc signature changes and the old permission no longer applies, even if the switch looks on. Reset it with the command below, launch the app, grant the permission again, and relaunch.
+> ```bash
+> tccutil reset All local.touchbarfeedback
+> ```
 
 ## Usage
 
-Click the 👆 icon in the menu bar. The menu follows your system language (Korean or English).
+Click the 👆 icon in the menu bar.
 
 <p align="center"><img src="docs/menu-en.png" width="720" alt="Menu bar settings menu"></p>
 
@@ -54,14 +57,15 @@ Click the 👆 icon in the menu bar. The menu follows your system language (Kore
 |---|---|
 | Enabled | Turn all feedback on/off |
 | Haptic / strength | Trackpad haptic and its strength (choosing one previews it) |
-| Click sound | Play a click sound on each tap |
+| Click sound | Toggle the sound and pick which one (choosing one previews it) |
 | Launch at login | Start automatically after reboot |
 
 ## How it works
 
-1. **Touch detection**: a listen-only `CGEventTap` receives gesture events and tells Touch Bar touches apart from trackpad touches by the source device type (`NSTouch.device.deviceType == 3`). Events from other apps are never blocked or modified.
-2. **Haptics**: to vibrate even when no finger is on the trackpad, it drives the trackpad actuator directly via the private `MultitouchSupport` framework (`MTActuator*` functions).
-3. **Sound**: a preloaded system sound is played for minimal latency.
+1. **Touch detection**: a listen-only `CGEventTap` receives gesture events and keeps only touches whose source device is the Touch Bar (`NSTouch.device.deviceType == 3`). Events from other apps are never blocked or modified.
+2. **Button hit-testing**: the Accessibility API reads where the frontmost app and the Control Strip placed their Touch Bar items (`AXFunctionRowTopLevelElements`), and feedback fires only when the touch lands on one.
+3. **Haptics**: to vibrate even when no finger is on the trackpad, it drives the trackpad actuator directly via the private `MultitouchSupport` framework (`MTActuator*` functions).
+4. **Sound**: the todok sound is synthesized by [`tools/make_sounds.py`](tools/make_sounds.py) into `sounds/`, and preloaded for minimal latency.
 
 ## Known limitations
 
@@ -70,8 +74,8 @@ Click the 👆 icon in the menu bar. The menu follows your system language (Kore
 
 ## Troubleshooting
 
-- **No feedback?** Remove and re-add the Input Monitoring permission as described above, then relaunch the app. This fixes most cases.
-- **Debug log**: run the command below and relaunch the app; permission state and touch events are written to `~/Library/Logs/TouchBarFeedback.log`.
+- **No feedback?** Reset the permission with the `tccutil reset` command above, grant it again, and relaunch the app. This fixes most cases.
+- **Debug log**: run the command below and relaunch the app; permission state and touch positions are written to `~/Library/Logs/TouchBarFeedback.log`.
   ```bash
   defaults write local.touchbarfeedback debug -bool true
   ```
@@ -83,6 +87,7 @@ Turn off "Launch at login", quit from the menu, then delete the app:
 
 ```bash
 rm -rf ~/Applications/TouchBarFeedback.app
+tccutil reset All local.touchbarfeedback
 ```
 
 ## Credits
