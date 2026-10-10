@@ -38,9 +38,11 @@ open ~/Applications/TouchBarFeedback.app
 1. Grant **Input Monitoring** permission:
    System Settings → Privacy & Security → Input Monitoring → turn on TouchBarFeedback
    (the "⚠️ Input Monitoring permission needed" menu item opens that pane for you)
-2. The app picks up the permission within a few seconds. Tap the Touch Bar.
+2. **Quit and relaunch the app.** The permission only takes effect after a relaunch.
+   (If a "Quit & Reopen" prompt appears, just click it.)
+3. Tap the Touch Bar.
 
-> Rebuilding changes the ad-hoc code signature, so you may need to grant the permission again.
+> **If you rebuild**, the ad-hoc signature changes and the old permission no longer applies. Remove TouchBarFeedback from the Input Monitoring list with **−**, add it again, and relaunch the app. Even if the switch looks on, the old entry won't work — remove and re-add it.
 
 ## Usage
 
@@ -57,7 +59,7 @@ Click the 👆 icon in the menu bar. The menu follows your system language (Kore
 
 ## How it works
 
-1. **Touch detection**: a listen-only `CGEventTap` receives gesture events and keeps only touches where `NSTouch.type == .direct`. Touch Bar touches are direct; trackpad touches are indirect. Events from other apps are never blocked or modified.
+1. **Touch detection**: a listen-only `CGEventTap` receives gesture events and tells Touch Bar touches apart from trackpad touches by the source device type (`NSTouch.device.deviceType == 3`). Events from other apps are never blocked or modified.
 2. **Haptics**: to vibrate even when no finger is on the trackpad, it drives the trackpad actuator directly via the private `MultitouchSupport` framework (`MTActuator*` functions).
 3. **Sound**: a preloaded system sound is played for minimal latency.
 
@@ -65,6 +67,15 @@ Click the 👆 icon in the menu bar. The menu follows your system language (Kore
 
 - Haptics rely on a **private Apple API**, so they may break after a macOS update. This also means the app can't ship on the App Store.
 - You feel the vibration on the trackpad, not on the Touch Bar itself.
+
+## Troubleshooting
+
+- **No feedback?** Remove and re-add the Input Monitoring permission as described above, then relaunch the app. This fixes most cases.
+- **Debug log**: run the command below and relaunch the app; permission state and touch events are written to `~/Library/Logs/TouchBarFeedback.log`.
+  ```bash
+  defaults write local.touchbarfeedback debug -bool true
+  ```
+  Turn it off with `defaults delete local.touchbarfeedback debug`
 
 ## Uninstall
 

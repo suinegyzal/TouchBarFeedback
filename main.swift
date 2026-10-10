@@ -12,6 +12,8 @@ final class Haptic {
     private typealias ActuateFn = @convention(c) (UnsafeMutableRawPointer, Int32, UInt32, Float, Float) -> Int32
 
     private var actuator: UnsafeMutableRawPointer?
+    private var create: CreateFn?
+    private var openFn: OpenFn?
     private var actuate: ActuateFn?
 
     init() {
@@ -19,12 +21,16 @@ final class Haptic {
               let c = dlsym(lib, "MTActuatorCreateFromDeviceID"),
               let o = dlsym(lib, "MTActuatorOpen"),
               let a = dlsym(lib, "MTActuatorActuate") else { return }
-        let create = unsafeBitCast(c, to: CreateFn.self)
-        let open = unsafeBitCast(o, to: OpenFn.self)
+        create = unsafeBitCast(c, to: CreateFn.self)
+        openFn = unsafeBitCast(o, to: OpenFn.self)
         actuate = unsafeBitCast(a, to: ActuateFn.self)
+        open()
+    }
 
+    private func open() {
+        guard let create, let openFn else { return }
         for id in Haptic.actuatableDeviceIDs() {
-            if let act = create(id), open(act) == 0 { actuator = act; break }
+            if let act = create(id), openFn(act) == 0 { actuator = act; break }
         }
     }
 
@@ -32,7 +38,9 @@ final class Haptic {
 
     func fire(_ pattern: Int32) {
         guard let act = actuator, let actuate else { return }
-        _ = actuate(act, pattern, 0, 0, 0)
+        let r = actuate(act, pattern, 0, 0, 0)
+        dlog("actuate pattern=\(pattern) result=\(r)")
+        if r != 0 { actuator = nil; open(); if let act = actuator { _ = actuate(act, pattern, 0, 0, 0) } }
     }
 
     private static func actuatableDeviceIDs() -> [UInt64] {
@@ -55,6 +63,15 @@ final class Haptic {
 
 let isKorean = Locale.preferredLanguages.first?.hasPrefix("ko") ?? false
 func L(_ ko: String, _ en: String) -> String { isKorean ? ko : en }
+
+// `defaults write local.touchbarfeedback debug -bool true` 이면 ~/Library/Logs/TouchBarFeedback.log 에 기록
+func dlog(_ m: @autoclosure () -> String) {
+    guard UserDefaults.standard.bool(forKey: "debug") else { return }
+    let url = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/TouchBarFeedback.log")
+    let line = "\(Date()) \(m())\n"
+    if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close() }
+    else { try? line.write(to: url, atomically: true, encoding: .utf8) }
+}
 
 // MARK: - 설정
 
@@ -97,15 +114,20 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // 터치바 터치는 제스처 이벤트 중 direct 타입 터치로 들어온다.
+    // 입력 모니터링 권한이 없으면 탭은 만들어져도 이벤트가 오지 않으므로, 권한이 생길 때까지 기다렸다가 만든다.
     func startTap() {
-        if !CGPreflightListenEventAccess() { CGRequestListenEventAccess() }
-        let mask = CGEventMask(1) << CGEventMask(NSEvent.EventType.gesture.rawValue)
+        let trusted = CGPreflightListenEventAccess() || AXIsProcessTrusted()
+        dlog("startTap listen=\(CGPreflightListenEventAccess()) ax=\(AXIsProcessTrusted()) haptic=\(haptic.available)")
+        if !trusted { CGRequestListenEventAccess() }
+        let mask = (CGEventMask(1) << CGEventMask(NSEvent.EventType.gesture.rawValue))
+                 | (CGEventMask(1) << CGEventMask(NSEvent.EventType.directTouch.rawValue))
         let callback: CGEventTapCallBack = { _, type, cgEvent, refcon in
             let app = Unmanaged<App>.fromOpaque(refcon!).takeUnretainedValue()
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                 if let tap = app.tap { CGEvent.tapEnable(tap: tap, enable: true) }
             } else if let ev = NSEvent(cgEvent: cgEvent),
-                      ev.touches(matching: .began, in: nil).contains(where: { $0.type == .direct }) {
+                      ({ dlog("event touches=\(ev.allTouches().map { "dev\(App.isTouchBar($0) ? "TB" : "other")/ph\($0.phase.rawValue)/rest\($0.isResting)" })"); return true })(),
+                      ev.allTouches().contains(where: { $0.phase == .began && !$0.isResting && App.isTouchBar($0) }) {
                 app.feedback()
             }
             return Unmanaged.passUnretained(cgEvent)
@@ -113,13 +135,22 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
                                 eventsOfInterest: mask, callback: callback,
                                 userInfo: Unmanaged.passUnretained(self).toOpaque())
+        dlog("tapCreate=\(tap != nil)")
         if let tap {
             CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, tap, 0), .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
         } else {
-            // 입력 모니터링 권한이 아직 없음 — 허용될 때까지 재시도
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.startTap() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.startTap() }
         }
+    }
+
+    // 터치바 터치인지는 NSTouch의 비공개 속성 device.deviceType(3 = 터치바)으로 구분한다.
+    // (터치바 터치도 type이 .direct로 오지 않는 경우가 있어 type으로는 구분할 수 없다)
+    static func isTouchBar(_ touch: NSTouch) -> Bool {
+        guard touch.responds(to: NSSelectorFromString("device")),
+              let device = touch.value(forKey: "device") as? NSObject,
+              device.responds(to: NSSelectorFromString("deviceType")) else { return touch.type == .direct }
+        return (device.value(forKey: "deviceType") as? Int) == 3
     }
 
     func feedback() {
@@ -132,7 +163,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        if tap == nil {
+        if !(CGPreflightListenEventAccess() || AXIsProcessTrusted()) {
             menu.addItem(item(L("⚠️ 입력 모니터링 권한 필요 — 여기서 열기", "⚠️ Input Monitoring permission needed — open"), #selector(openPrivacy)))
             menu.addItem(.separator())
         }

@@ -18,6 +18,7 @@ cat > $APP/Contents/Info.plist <<'EOF'
   <key>LSUIElement</key><true/>
 </dict></plist>
 EOF
+# ad-hoc 서명: 다시 빌드하면 서명이 바뀌므로 입력 모니터링 권한을 다시 허용해야 한다.
 codesign --force --sign - $APP
 mkdir -p ~/Applications
 pkill -x TouchBarFeedback || true
